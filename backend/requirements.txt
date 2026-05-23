@@ -1,0 +1,31 @@
+# Core Framework
+Flask==2.3.3
+Flask-CORS==4.0.0
+
+# File Processing
+pdf-plumber==0.10.3
+PyPDF2==3.0.1
+python-docx==0.8.11
+Pillow==10.0.0
+
+# Metadata & Date Extraction
+exifr==1.3.5
+python-dateutil==2.8.2
+arrow==1.3.0
+
+# PDF Generation
+reportlab==4.0.7
+
+# Database
+SQLAlchemy==2.0.21
+psycopg2-binary==2.9.7  # PostgreSQL (optional)
+
+# Utilities
+python-dotenv==1.0.0
+requests==2.31.0
+
+# Development
+pytest==7.4.2
+pytest-cov==4.1.0
+black==23.9.1
+flake8==6.1.0

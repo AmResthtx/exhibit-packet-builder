@@ -1,184 +1,182 @@
-"""
-Date Extractor Module
-Extracts dates from files using multiple strategies:
-1. Filename parsing
-2. File metadata (creation/modification time)
-3. Image EXIF data
-4. PDF metadata
-5. Document properties
-"""
+"""Date extraction module for finding chronological information."""
 
-import os
 from datetime import datetime
-from pathlib import Path
+from typing import Tuple, Optional
 import re
-from dateutil import parser as date_parser
-import arrow
+from pathlib import Path
+from loguru import logger
 
 
 class DateExtractor:
-    """Extract dates from various file types and sources"""
+    """Extracts dates from files using multiple methods."""
     
-    # Common date patterns to look for in filenames
+    # Common date patterns
     DATE_PATTERNS = [
-        r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})',  # YYYY-MM-DD or YYYY/M/D
-        r'(\d{1,2}[-/]\d{1,2}[-/]\d{4})',  # MM-DD-YYYY or M/D/YYYY
-        r'(\d{1,2}[-/]\d{1,2}[-/]\d{2})',  # MM-DD-YY or M/D/YY
-        r'(20\d{2}[01]\d[0-3]\d)',         # YYYYMMDD
+        r'\d{4}-\d{2}-\d{2}',  # YYYY-MM-DD
+        r'\d{2}/\d{2}/\d{4}',  # MM/DD/YYYY
+        r'\d{2}-\d{2}-\d{4}',  # MM-DD-YYYY
+        r'\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}',  # D Month YYYY
     ]
     
-    def __init__(self):
-        pass
+    def extract_from_filename(self, filename: str) -> Tuple[Optional[datetime], float]:
+        """
+        Try to extract date from filename.
+        Returns tuple of (date, confidence_score)
+        """
+        for pattern in self.DATE_PATTERNS:
+            match = re.search(pattern, filename, re.IGNORECASE)
+            if match:
+                try:
+                    date_str = match.group(0)
+                    date = self._parse_date_string(date_str)
+                    if date:
+                        return date, 0.7  # Moderate confidence for filename dates
+                except Exception as e:
+                    logger.debug(f"Failed to parse date from filename: {e}")
+        
+        return None, 0.0
     
-    def extract_from_filename(self, filename):
-        """Extract date from filename"""
+    def extract_from_exif(self, image_path: str) -> Tuple[Optional[datetime], float]:
+        """
+        Extract date from image EXIF data.
+        Returns tuple of (date, confidence_score)
+        """
         try:
-            # Remove file extension
-            name_without_ext = Path(filename).stem
+            import piexif
+            from PIL import Image
             
-            # Try each pattern
-            for pattern in self.DATE_PATTERNS:
-                match = re.search(pattern, name_without_ext)
-                if match:
-                    date_str = match.group(1)
-                    # Try to parse the matched date string
-                    try:
-                        parsed_date = date_parser.parse(date_str)
-                        return parsed_date.isoformat()
-                    except:
-                        continue
+            image = Image.open(image_path)
+            exif_data = image._getexif()
             
-            return None
+            if exif_data:
+                # DateTime tag is 306
+                if 306 in exif_data:
+                    date_str = exif_data[306].decode() if isinstance(exif_data[306], bytes) else exif_data[306]
+                    date = datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
+                    return date, 0.95  # High confidence for EXIF dates
         except Exception as e:
-            print(f"Error extracting date from filename: {e}")
-            return None
+            logger.debug(f"Failed to extract EXIF date: {e}")
+        
+        return None, 0.0
     
-    def extract_from_file_metadata(self, filepath):
-        """Extract date from file creation/modification time"""
-        try:
-            stat = os.stat(filepath)
-            # Prefer modified time, fall back to creation time
-            modified_time = stat.st_mtime
-            created_time = stat.st_ctime
-            
-            # Use modified time if available and recent, otherwise creation time
-            timestamp = max(modified_time, created_time) if modified_time != created_time else modified_time
-            
-            date_obj = datetime.fromtimestamp(timestamp)
-            return date_obj.isoformat()
-        except Exception as e:
-            print(f"Error extracting file metadata: {e}")
-            return None
-    
-    def extract_from_image_exif(self, filepath):
-        """Extract date from image EXIF data"""
-        try:
-            from exifr import EXIF
-            
-            exif_data = EXIF.load(filepath)
-            
-            # Common EXIF date fields
-            date_fields = [
-                'DateTime',
-                'DateTimeOriginal',
-                'DateTimeDigitized',
-                'DateTime_Original'
-            ]
-            
-            for field in date_fields:
-                if field in exif_data:
-                    try:
-                        date_obj = date_parser.parse(str(exif_data[field]))
-                        return date_obj.isoformat()
-                    except:
-                        continue
-            
-            return None
-        except Exception as e:
-            print(f"Error extracting EXIF data: {e}")
-            return None
-    
-    def extract_from_pdf(self, filepath):
-        """Extract date from PDF metadata"""
+    def extract_from_pdf_metadata(self, pdf_path: str) -> Tuple[Optional[datetime], float]:
+        """
+        Extract date from PDF metadata.
+        Returns tuple of (date, confidence_score)
+        """
         try:
             import pdf_plumber
             
-            with pdf_plumber.open(filepath) as pdf:
+            with pdf_plumber.open(pdf_path) as pdf:
                 metadata = pdf.metadata
-                
                 if metadata:
-                    # Check common PDF metadata fields
-                    date_fields = ['CreationDate', 'ModDate', 'creation_date', 'mod_date']
+                    # Try CreationDate
+                    if 'CreationDate' in metadata:
+                        date_str = metadata['CreationDate']
+                        date = self._parse_pdf_date(date_str)
+                        if date:
+                            return date, 0.9  # High confidence
                     
-                    for field in date_fields:
-                        if field in metadata:
-                            try:
-                                date_obj = date_parser.parse(str(metadata[field]))
-                                return date_obj.isoformat()
-                            except:
-                                continue
-            
-            return None
+                    # Try ModDate
+                    if 'ModDate' in metadata:
+                        date_str = metadata['ModDate']
+                        date = self._parse_pdf_date(date_str)
+                        if date:
+                            return date, 0.85
         except Exception as e:
-            print(f"Error extracting PDF metadata: {e}")
-            return None
+            logger.debug(f"Failed to extract PDF metadata date: {e}")
+        
+        return None, 0.0
     
-    def extract_from_docx(self, filepath):
-        """Extract date from Word document properties"""
+    def extract_from_file_metadata(self, file_path: str) -> Tuple[Optional[datetime], float]:
+        """
+        Extract date from file system metadata.
+        Returns tuple of (date, confidence_score)
+        """
         try:
-            from docx import Document
-            
-            doc = Document(filepath)
-            core_props = doc.core_properties
-            
-            # Check common document property fields
-            if core_props.created:
-                return core_props.created.isoformat()
-            elif core_props.modified:
-                return core_props.modified.isoformat()
-            
-            return None
+            path = Path(file_path)
+            # Modified time is more reliable than created time on most systems
+            mtime = path.stat().st_mtime
+            date = datetime.fromtimestamp(mtime)
+            return date, 0.6  # Lower confidence for filesystem dates
         except Exception as e:
-            print(f"Error extracting DOCX properties: {e}")
-            return None
+            logger.debug(f"Failed to extract file metadata date: {e}")
+        
+        return None, 0.0
     
-    def extract_date(self, filepath, filename=None):
+    def extract_all(self, file_path: str, file_type: str) -> Tuple[Optional[datetime], str, float]:
         """
-        Extract date from file using multiple strategies
-        Returns the most reliable date found
+        Extract date using all available methods and return best result.
+        Returns tuple of (date, source, confidence_score)
         """
-        results = {}
+        results = []
+        filename = Path(file_path).name
         
-        file_ext = Path(filepath).suffix.lower()
+        # Try filename
+        date, conf = self.extract_from_filename(filename)
+        if date:
+            results.append((date, "filename", conf))
         
-        # Try filename first (most specific)
-        if filename:
-            results['filename'] = self.extract_from_filename(filename)
+        # Try file-type specific extraction
+        if file_type.lower() in ["jpg", "jpeg", "png", "tiff", "tif"]:
+            date, conf = self.extract_from_exif(file_path)
+            if date:
+                results.append((date, "exif", conf))
         
-        # Try file metadata
-        results['file_metadata'] = self.extract_from_file_metadata(filepath)
+        if file_type.lower() == "pdf":
+            date, conf = self.extract_from_pdf_metadata(file_path)
+            if date:
+                results.append((date, "pdf_metadata", conf))
         
-        # Try format-specific extraction
-        if file_ext in ['.jpg', '.jpeg', '.png', '.gif']:
-            results['exif'] = self.extract_from_image_exif(filepath)
+        # Try filesystem metadata as fallback
+        date, conf = self.extract_from_file_metadata(file_path)
+        if date:
+            results.append((date, "file_metadata", conf))
         
-        elif file_ext == '.pdf':
-            results['pdf_metadata'] = self.extract_from_pdf(filepath)
+        # Return result with highest confidence
+        if results:
+            best = max(results, key=lambda x: x[2])
+            logger.info(f"Extracted date for {filename}: {best[0]} (source: {best[1]}, confidence: {best[2]})")
+            return best
         
-        elif file_ext in ['.docx', '.doc']:
-            results['docx_properties'] = self.extract_from_docx(filepath)
+        logger.warning(f"No date extracted from {filename}")
+        return None, "unknown", 0.0
+    
+    @staticmethod
+    def _parse_date_string(date_str: str) -> Optional[datetime]:
+        """Parse various date string formats."""
+        formats = [
+            "%Y-%m-%d",
+            "%m/%d/%Y",
+            "%m-%d-%Y",
+            "%d %b %Y",
+            "%d %B %Y",
+        ]
         
-        # Return the first non-None result (in order of preference)
-        for strategy in ['filename', 'exif', 'pdf_metadata', 'docx_properties', 'file_metadata']:
-            if results.get(strategy):
-                return {
-                    'date': results[strategy],
-                    'strategy': strategy,
-                    'all_results': results
-                }
+        for fmt in formats:
+            try:
+                return datetime.strptime(date_str, fmt)
+            except ValueError:
+                continue
         
-        return {
-            'date': None,
-            'strategy': 'none',
-            'all_results': results
-        }
+        return None
+    
+    @staticmethod
+    def _parse_pdf_date(date_str: str) -> Optional[datetime]:
+        """Parse PDF date format (D:YYYYMMDDHHmmSS)."""
+        try:
+            # Remove D: prefix if present
+            if date_str.startswith('D:'):
+                date_str = date_str[2:]
+            
+            # Parse basic format
+            if len(date_str) >= 8:
+                return datetime.strptime(date_str[:8], "%Y%m%d")
+        except Exception:
+            pass
+        
+        return None
+
+
+# Initialize extractor
+date_extractor = DateExtractor()

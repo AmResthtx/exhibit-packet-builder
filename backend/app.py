@@ -1,43 +1,79 @@
-"""
-Exhibit Packet Builder - Flask Application
-Main entry point for the backend API
-"""
+"""Main FastAPI application entry point."""
 
-from flask import Flask, jsonify
-from flask_cors import CORS
-from dotenv import load_dotenv
-import os
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
+from loguru import logger
 
-# Load environment variables
-load_dotenv()
+from config import settings
 
-# Initialize Flask app
-app = Flask(__name__)
-CORS(app)
+# Create upload and temp directories if they don't exist
+Path(settings.UPLOAD_DIR).mkdir(exist_ok=True)
+Path(settings.TEMP_DIR).mkdir(exist_ok=True)
 
-# Configuration
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max file size
-app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', 'uploads')
+app = FastAPI(
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
+    description="An intelligent tool for building legal exhibit packets",
+)
 
-# Create uploads folder if it doesn't exist
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Routes (to be added)
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    return jsonify({
-        'status': 'healthy',
-        'message': 'Exhibit Packet Builder API is running'
-    }), 200
+# Import routers
+from routes import files, exhibits, rules, packets
 
-@app.route('/api/version', methods=['GET'])
-def get_version():
-    """Get API version"""
-    return jsonify({
-        'version': '0.1.0',
-        'phase': 'Phase 1 - Foundation'
-    }), 200
+# Include routers
+app.include_router(
+    files.router,
+    prefix=f"{settings.API_V1_PREFIX}/files",
+    tags=["files"],
+)
+app.include_router(
+    exhibits.router,
+    prefix=f"{settings.API_V1_PREFIX}/exhibits",
+    tags=["exhibits"],
+)
+app.include_router(
+    rules.router,
+    prefix=f"{settings.API_V1_PREFIX}/rules",
+    tags=["rules"],
+)
+app.include_router(
+    packets.router,
+    prefix=f"{settings.API_V1_PREFIX}/packets",
+    tags=["packets"],
+)
 
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+
+@app.get("/")
+async def root():
+    """Root endpoint."""
+    return {
+        "message": "Welcome to Exhibit Packet Builder",
+        "version": settings.APP_VERSION,
+        "docs": "/docs",
+        "redoc": "/redoc",
+    }
+
+
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
+    return {"status": "healthy", "app": settings.APP_NAME}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "app:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=settings.DEBUG,
+    )

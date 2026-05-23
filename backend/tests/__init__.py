@@ -1,3 +1,1 @@
-"""
-Tests for Exhibit Packet Builder
-"""
+"""Tests package."""
